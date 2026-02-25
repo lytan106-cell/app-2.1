@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Google Drive PDF Viewer</title>
+    <style>
+        :root {
+            --primary: #1a73e8;
+            --bg: #f0f2f5;
+            --surface: #ffffff;
+            --text: #202124;
+            --text-secondary: #5f6368;
+            --border: #dadce0;
+            --row-height: 90px; /* Tăng chiều cao để hiển thị dạng card */
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #app {
+            width: 100%;
+            max-width: 480px;
+            height: 100%;
+            background: var(--surface);
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            overflow: hidden;
+        }
+        @media (min-width: 481px) {
+            #app {
+                height: 90vh;
+                border-radius: 20px;
+                box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+            }
+        }
+        header {
+            padding: 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: var(--surface);
+            z-index: 10;
+        }
+        .search-container {
+            flex: 1;
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+        #searchInput {
+            width: 100%;
+            padding: 12px 16px;
+            padding-right: 40px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            font-size: 16px;
+            outline: none;
+            transition: border-color 0.2s;
+            font-family: inherit;
+        }
+        #searchInput:focus {
+            border-color: var(--primary);
+        }
+        .spinner {
+            position: absolute;
+            right: 12px;
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--border);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        .hidden { display: none !important; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        
+        #scrollContainer {
+            flex: 1;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            position: relative;
+            contain: strict;
+            will-change: transform;
+            background: var(--bg); /* Nền xám cho danh sách card */
+        }
+        #spacer {
+            width: 1px;
+            opacity: 0;
+        }
+        #renderWindow {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            will-change: transform;
+        }
+        
+        /* Card Styles */
+        .row {
+            height: var(--row-height);
+            padding: 8px 16px;
+            width: 100%;
+            user-select: none;
+        }
+        .card {
+            background: var(--surface);
+            border-radius: 12px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+            border: 1px solid transparent;
+            height: 100%;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            padding: 0 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .card:active {
+            transform: scale(0.98);
+        }
+        .card.selected {
+            border-color: var(--primary);
+            background: #f0f4ff;
+            box-shadow: 0 4px 12px rgba(26, 115, 232, 0.15);
+        }
+        
+        .row-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 10px;
+            background: #fce8e6;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 12px;
+            color: #ea4335;
+            font-weight: bold;
+            font-size: 20px;
+            flex-shrink: 0;
+        }
+        .row-content {
+            flex: 1;
+            overflow: hidden;
+            margin-right: 8px;
+        }
+        .row-title {
+            font-size: 15px;
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            color: var(--text);
+            margin-bottom: 4px;
+        }
+        .row-subtitle {
+            font-size: 13px;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .preview-btn {
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            border: none;
+            background: transparent;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            margin-right: 8px;
+            font-size: 18px;
+            color: var(--text-secondary);
+            transition: background 0.2s, color 0.2s;
+            flex-shrink: 0;
+        }
+        .preview-btn:hover {
+            background: #e8f0fe;
+            color: var(--primary);
+        }
+        .checkbox {
+            width: 24px;
+            height: 24px;
+            border: 2px solid var(--border);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+        .card.selected .checkbox {
+            background: var(--primary);
+            border-color: var(--primary);
+        }
+        .card.selected .checkbox::after {
+            content: '';
+            width: 6px;
+            height: 12px;
+            border: solid white;
+            border-width: 0 2px 2px 0;
+            transform: rotate(45deg) translateY(-1px);
+        }
+        #statusMessage {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 15px;
+            pointer-events: none;
+            background: rgba(255,255,255,0.9);
+            padding: 12px 24px;
+            border-radius: 20px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            z-index: 50;
+        }
+
+        /* Preview Overlay */
+        #previewOverlay {
+            position: absolute;
+            inset: 0;
+            background: var(--surface);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            transform: translateY(100%);
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        #previewOverlay.active {
+            transform: translateY(0);
+        }
+        .preview-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: var(--surface);
+        }
+        .preview-title-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            overflow: hidden;
+        }
+        .preview-title {
+            font-size: 16px;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .close-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: none;
+            background: transparent;
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-secondary);
+        }
+        .close-btn:hover {
+            background: #f1f3f4;
+        }
+        #pdfFrame {
+            flex: 1;
+            width: 100%;
+            height: 100%;
+            border: none;
+            background: #e5e5e5;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <header>
+            <div class="search-container">
+                <input type="text" id="searchInput" placeholder="Tìm kiếm tài liệu PDF..." autocomplete="off">
+                <div id="loadingSpinner" class="spinner hidden"></div>
+            </div>
+        </header>
+        
+        <main id="scrollContainer">
+            <div id="spacer"></div>
+            <div id="renderWindow"></div>
+        </main>
+        
+        <div id="statusMessage" class="hidden"></div>
+
+        <!-- PDF Preview Overlay -->
+        <div id="previewOverlay">
+            <div class="preview-header">
+                <div class="preview-title-container">
+                    <div class="row-icon" style="width:32px;height:32px;font-size:14px;margin:0;">📄</div>
+                    <div class="preview-title" id="previewTitle">Xem trước tài liệu</div>
+                </div>
+                <button class="close-btn" id="closePreviewBtn">✕</button>
+            </div>
+            <iframe id="pdfFrame" title="PDF Preview"></iframe>
+        </div>
+    </div>
+
+    <script>
+        const ROW_HEIGHT = 90; // Chiều cao mới cho dạng card
+        const OVERSCAN = 10;
+
+        let dataset = [];
+        let filteredData = [];
+        let selectedIds = new Set();
+        let domPool = [];
+        
+        let renderWindow;
+        let spacer;
+        let scrollContainer;
+        let searchInput;
+        let loadingSpinner;
+        let statusMessage;
+        let previewOverlay;
+        let previewTitle;
+        let pdfFrame;
+        let closePreviewBtn;
+
+        let containerHeight = 0;
+        let visibleCount = 0;
+        let lastScrollY = 0;
+        let ticking = false;
+
+        let worker;
+        let currentRequestId = 0;
+        let searchTimeout;
+
+        async function loadDataFromDrive() {
+            try {
+                statusMessage.textContent = 'Đang tải dữ liệu từ Google Drive...';
+                statusMessage.classList.remove('hidden');
+                loadingSpinner.classList.remove('hidden');
+
+                const API_KEY = 'AIzaSyA7qrMyMkywuN1IupOH7bh1EJyJDzwUg_k';
+                const FOLDER_ID = '1-64KL_63dheL5K-LHPwQviL9Ez6Gky8v';
+                const query = "'" + FOLDER_ID + "' in parents and mimeType='application/pdf'";
+                
+                let allFiles = [];
+                let pageToken = '';
+                
+                // Lặp để lấy toàn bộ danh sách nếu có nhiều trang
+                do {
+                    const url = "https://www.googleapis.com/drive/v3/files?q=" + encodeURIComponent(query) + "&fields=nextPageToken,files(id,name,createdTime,mimeType)&key=" + API_KEY + (pageToken ? "&pageToken=" + pageToken : "");
+                    const response = await fetch(url);
+                    const data = await response.json();
+                    
+                    if (data.error) {
+                        throw new Error(data.error.message);
+                    }
+                    
+                    if (data.files) {
+                        allFiles = allFiles.concat(data.files);
+                    }
+                    pageToken = data.nextPageToken;
+                } while (pageToken);
+
+                // Format dữ liệu
+                dataset = allFiles.map(function(file) {
+                    const d = new Date(file.createdTime);
+                    const day = String(d.getDate()).padStart(2, '0');
+                    const month = String(d.getMonth() + 1).padStart(2, '0');
+                    const year = d.getFullYear();
+
+                    return {
+                        id: file.id,
+                        name: file.name,
+                        createdTime: day + '/' + month + '/' + year
+                    };
+                });
+
+                filteredData = dataset;
+                
+                if (dataset.length === 0) {
+                    statusMessage.textContent = 'Không tìm thấy file PDF nào trong thư mục';
+                } else {
+                    statusMessage.classList.add('hidden');
+                    initWorker();
+                    onResize();
+                }
+            } catch (error) {
+                console.error('Lỗi fetch API:', error);
+                statusMessage.textContent = 'Lỗi khi tải dữ liệu: ' + error.message;
+            } finally {
+                loadingSpinner.classList.add('hidden');
+            }
+        }
+
+        function init() {
+            renderWindow = document.getElementById('renderWindow');
+            spacer = document.getElementById('spacer');
+            scrollContainer = document.getElementById('scrollContainer');
+            searchInput = document.getElementById('searchInput');
+            loadingSpinner = document.getElementById('loadingSpinner');
+            statusMessage = document.getElementById('statusMessage');
+            previewOverlay = document.getElementById('previewOverlay');
+            previewTitle = document.getElementById('previewTitle');
+            pdfFrame = document.getElementById('pdfFrame');
+            closePreviewBtn = document.getElementById('closePreviewBtn');
+
+            scrollContainer.addEventListener('scroll', onScroll, { passive: true });
+            searchInput.addEventListener('input', onSearch);
+            renderWindow.addEventListener('click', onRowClick);
+            closePreviewBtn.addEventListener('click', closePreview);
+            window.addEventListener('resize', onResize);
+
+            // Bắt đầu tải dữ liệu
+            loadDataFromDrive();
+        }
+
+        function initWorker() {
+            const workerCode = "let data = [];\n" +
+                "self.onmessage = function(e) {\n" +
+                "    const type = e.data.type;\n" +
+                "    const payload = e.data.payload;\n" +
+                "    const requestId = e.data.requestId;\n" +
+                "    if (type === 'INIT') {\n" +
+                "        data = payload;\n" +
+                "    } else if (type === 'FILTER') {\n" +
+                "        const query = payload.toLowerCase();\n" +
+                "        if (!query) {\n" +
+                "            self.postMessage({ type: 'RESULT', payload: data, requestId: requestId });\n" +
+                "            return;\n" +
+                "        }\n" +
+                "        let result = [];\n" +
+                "        let i = 0;\n" +
+                "        const CHUNK_SIZE = 2000;\n" +
+                "        function processChunk() {\n" +
+                "            const end = Math.min(i + CHUNK_SIZE, data.length);\n" +
+                "            for (; i < end; i++) {\n" +
+                "                if (data[i].name.toLowerCase().includes(query)) {\n" +
+                "                    result.push(data[i]);\n" +
+                "                }\n" +
+                "            }\n" +
+                "            if (i < data.length) {\n" +
+                "                setTimeout(processChunk, 0);\n" +
+                "            } else {\n" +
+                "                self.postMessage({ type: 'RESULT', payload: result, requestId: requestId });\n" +
+                "            }\n" +
+                "        }\n" +
+                "        processChunk();\n" +
+                "    }\n" +
+                "};";
+            
+            const blob = new Blob([workerCode], { type: 'application/javascript' });
+            worker = new Worker(URL.createObjectURL(blob));
+            
+            worker.onmessage = function(e) {
+                const type = e.data.type;
+                const payload = e.data.payload;
+                const requestId = e.data.requestId;
+                
+                if (type === 'RESULT' && requestId === currentRequestId) {
+                    filteredData = payload;
+                    loadingSpinner.classList.add('hidden');
+                    updateScrollHeight();
+                    scrollContainer.scrollTop = 0;
+                    forceRender();
+                    
+                    if (filteredData.length === 0) {
+                        statusMessage.textContent = 'Không tìm thấy kết quả';
+                        statusMessage.classList.remove('hidden');
+                    } else {
+                        statusMessage.classList.add('hidden');
+                    }
+                }
+            };
+            
+            worker.onerror = function(e) {
+                loadingSpinner.classList.add('hidden');
+                statusMessage.textContent = 'Lỗi Worker. Vui lòng tải lại trang.';
+                statusMessage.classList.remove('hidden');
+            };
+
+            worker.postMessage({ type: 'INIT', payload: dataset });
+        }
+
+        function onResize() {
+            if (filteredData.length === 0) return;
+            
+            containerHeight = scrollContainer.clientHeight;
+            visibleCount = Math.ceil(containerHeight / ROW_HEIGHT);
+            const poolSize = visibleCount + OVERSCAN * 2;
+            
+            while (domPool.length < poolSize) {
+                const row = document.createElement('div');
+                row.className = 'row';
+                row.innerHTML = `
+                    <div class="card">
+                        <div class="row-icon">📄</div>
+                        <div class="row-content">
+                            <div class="row-title"></div>
+                            <div class="row-subtitle">
+                                <span>📅</span>
+                                <span class="date-text"></span>
+                            </div>
+                        </div>
+                        <button class="preview-btn" title="Xem trước PDF">👁️</button>
+                        <div class="checkbox"></div>
+                    </div>
+                `;
+                renderWindow.appendChild(row);
+                domPool.push({
+                    el: row,
+                    card: row.querySelector('.card'),
+                    title: row.querySelector('.row-title'),
+                    dateText: row.querySelector('.date-text'),
+                    id: null,
+                    index: -1
+                });
+            }
+            
+            updateScrollHeight();
+            forceRender();
+        }
+
+        function updateScrollHeight() {
+            spacer.style.height = (filteredData.length * ROW_HEIGHT) + 'px';
+        }
+
+        function onScroll() {
+            lastScrollY = scrollContainer.scrollTop;
+            if (!ticking) {
+                window.requestAnimationFrame(() => {
+                    render();
+                    ticking = false;
+                });
+                ticking = true;
+            }
+        }
+
+        function forceRender() {
+            lastScrollY = scrollContainer.scrollTop;
+            render();
+        }
+
+        function render() {
+            const newStartIndex = Math.max(0, Math.floor(lastScrollY / ROW_HEIGHT) - OVERSCAN);
+            
+            renderWindow.style.transform = `translate3d(0, ${newStartIndex * ROW_HEIGHT}px, 0)`;
+            
+            for (let i = 0; i < domPool.length; i++) {
+                const dataIndex = newStartIndex + i;
+                const node = domPool[i];
+                
+                if (dataIndex < filteredData.length) {
+                    const item = filteredData[dataIndex];
+                    node.el.style.display = 'block';
+                    
+                    if (node.id !== item.id) {
+                        node.title.textContent = item.name;
+                        node.dateText.textContent = item.createdTime;
+                        node.id = item.id;
+                        node.index = dataIndex;
+                        node.el.dataset.index = dataIndex;
+                    }
+                    
+                    if (selectedIds.has(item.id)) {
+                        node.card.classList.add('selected');
+                    } else {
+                        node.card.classList.remove('selected');
+                    }
+                } else {
+                    node.el.style.display = 'none';
+                    node.id = null;
+                    node.index = -1;
+                }
+            }
+        }
+
+        function onSearch(e) {
+            clearTimeout(searchTimeout);
+            const query = e.target.value;
+            
+            searchTimeout = setTimeout(() => {
+                currentRequestId++;
+                loadingSpinner.classList.remove('hidden');
+                statusMessage.classList.add('hidden');
+                if (worker) {
+                    worker.postMessage({ type: 'FILTER', payload: query, requestId: currentRequestId });
+                }
+            }, 200);
+        }
+
+        function onRowClick(e) {
+            const row = e.target.closest('.row');
+            if (!row) return;
+            
+            const index = parseInt(row.dataset.index, 10);
+            if (isNaN(index)) return;
+            
+            const item = filteredData[index];
+            if (!item) return;
+
+            // Xử lý nút xem trước
+            if (e.target.closest('.preview-btn')) {
+                openPreview(item);
+                return;
+            }
+            
+            // Xử lý chọn Card
+            const card = row.querySelector('.card');
+            if (selectedIds.has(item.id)) {
+                selectedIds.delete(item.id);
+                card.classList.remove('selected');
+            } else {
+                selectedIds.add(item.id);
+                card.classList.add('selected');
+            }
+        }
+
+        function openPreview(item) {
+            previewTitle.textContent = item.name;
+            // Sử dụng Google Drive Preview URL
+            pdfFrame.src = "https://drive.google.com/file/d/" + item.id + "/preview";
+            previewOverlay.classList.add('active');
+        }
+
+        function closePreview() {
+            previewOverlay.classList.remove('active');
+            setTimeout(() => {
+                pdfFrame.src = ""; // Xóa bộ nhớ iframe khi đóng
+            }, 300);
+        }
+
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
