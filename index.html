@@ -2,7 +2,7 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Google Drive PDF Viewer</title>
     <style>
         :root {
@@ -12,7 +12,7 @@
             --text: #202124;
             --text-secondary: #5f6368;
             --border: #dadce0;
-            --row-height: 90px; /* Tăng chiều cao để hiển thị dạng card */
+            --row-height: 90px;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -42,6 +42,64 @@
                 box-shadow: 0 8px 24px rgba(0,0,0,0.12);
             }
         }
+        
+        /* Login Overlay */
+        #loginOverlay {
+            position: absolute;
+            inset: 0;
+            background: var(--bg);
+            z-index: 200;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .login-box {
+            background: var(--surface);
+            padding: 32px;
+            border-radius: 16px;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.1);
+            width: 90%;
+            max-width: 320px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .login-box h2 {
+            text-align: center;
+            margin-bottom: 8px;
+            color: var(--primary);
+        }
+        .login-box input {
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 16px;
+            outline: none;
+        }
+        .login-box input:focus {
+            border-color: var(--primary);
+        }
+        .login-box button {
+            padding: 12px;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .login-box button:hover {
+            background: #1557b0;
+        }
+        #loginError {
+            color: #ea4335;
+            font-size: 14px;
+            text-align: center;
+            margin-top: -8px;
+        }
+
         header {
             padding: 16px;
             border-bottom: 1px solid var(--border);
@@ -84,6 +142,21 @@
         .hidden { display: none !important; }
         @keyframes spin { to { transform: rotate(360deg); } }
         
+        .share-btn {
+            padding: 10px 16px;
+            background: #34a853;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: background 0.2s;
+        }
+        .share-btn:hover {
+            background: #2d8c46;
+        }
+
         #scrollContainer {
             flex: 1;
             overflow-y: auto;
@@ -91,7 +164,7 @@
             position: relative;
             contain: strict;
             will-change: transform;
-            background: var(--bg); /* Nền xám cho danh sách card */
+            background: var(--bg);
         }
         #spacer {
             width: 1px;
@@ -290,11 +363,23 @@
 </head>
 <body>
     <div id="app">
+        <!-- Login Overlay -->
+        <div id="loginOverlay">
+            <div class="login-box">
+                <h2>Đăng nhập</h2>
+                <input type="text" id="username" placeholder="Tên đăng nhập">
+                <input type="password" id="password" placeholder="Mật khẩu">
+                <p id="loginError" class="hidden">Sai tài khoản hoặc mật khẩu</p>
+                <button id="loginBtn">Đăng nhập</button>
+            </div>
+        </div>
+
         <header>
             <div class="search-container">
                 <input type="text" id="searchInput" placeholder="Tìm kiếm tài liệu PDF..." autocomplete="off">
                 <div id="loadingSpinner" class="spinner hidden"></div>
             </div>
+            <button id="shareBtn" class="share-btn hidden">Chia sẻ</button>
         </header>
         
         <main id="scrollContainer">
@@ -318,7 +403,7 @@
     </div>
 
     <script>
-        const ROW_HEIGHT = 90; // Chiều cao mới cho dạng card
+        const ROW_HEIGHT = 90;
         const OVERSCAN = 10;
 
         let dataset = [];
@@ -336,15 +421,35 @@
         let previewTitle;
         let pdfFrame;
         let closePreviewBtn;
+        let shareBtn;
 
         let containerHeight = 0;
         let visibleCount = 0;
         let lastScrollY = 0;
         let ticking = false;
 
-        let worker;
-        let currentRequestId = 0;
         let searchTimeout;
+
+        // --- LOGIN LOGIC ---
+        const loginOverlay = document.getElementById('loginOverlay');
+        const usernameInput = document.getElementById('username');
+        const passwordInput = document.getElementById('password');
+        const loginBtn = document.getElementById('loginBtn');
+        const loginError = document.getElementById('loginError');
+
+        loginBtn.addEventListener('click', () => {
+            if (usernameInput.value === 'Admin' && passwordInput.value === '12345') {
+                loginOverlay.classList.add('hidden');
+                initApp();
+            } else {
+                loginError.classList.remove('hidden');
+            }
+        });
+
+        passwordInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') loginBtn.click();
+        });
+        // -------------------
 
         async function loadDataFromDrive() {
             try {
@@ -359,7 +464,6 @@
                 let allFiles = [];
                 let pageToken = '';
                 
-                // Lặp để lấy toàn bộ danh sách nếu có nhiều trang
                 do {
                     const url = "https://www.googleapis.com/drive/v3/files?q=" + encodeURIComponent(query) + "&fields=nextPageToken,files(id,name,createdTime,mimeType)&key=" + API_KEY + (pageToken ? "&pageToken=" + pageToken : "");
                     const response = await fetch(url);
@@ -375,7 +479,6 @@
                     pageToken = data.nextPageToken;
                 } while (pageToken);
 
-                // Format dữ liệu
                 dataset = allFiles.map(function(file) {
                     const d = new Date(file.createdTime);
                     const day = String(d.getDate()).padStart(2, '0');
@@ -395,7 +498,6 @@
                     statusMessage.textContent = 'Không tìm thấy file PDF nào trong thư mục';
                 } else {
                     statusMessage.classList.add('hidden');
-                    initWorker();
                     onResize();
                 }
             } catch (error) {
@@ -406,7 +508,7 @@
             }
         }
 
-        function init() {
+        function initApp() {
             renderWindow = document.getElementById('renderWindow');
             spacer = document.getElementById('spacer');
             scrollContainer = document.getElementById('scrollContainer');
@@ -417,82 +519,19 @@
             previewTitle = document.getElementById('previewTitle');
             pdfFrame = document.getElementById('pdfFrame');
             closePreviewBtn = document.getElementById('closePreviewBtn');
+            shareBtn = document.getElementById('shareBtn');
 
             scrollContainer.addEventListener('scroll', onScroll, { passive: true });
             searchInput.addEventListener('input', onSearch);
             renderWindow.addEventListener('click', onRowClick);
             closePreviewBtn.addEventListener('click', closePreview);
             window.addEventListener('resize', onResize);
+            
+            shareBtn.addEventListener('click', () => {
+                alert('Đã chia sẻ ' + selectedIds.size + ' tài liệu thành công!');
+            });
 
-            // Bắt đầu tải dữ liệu
             loadDataFromDrive();
-        }
-
-        function initWorker() {
-            const workerCode = "let data = [];\n" +
-                "self.onmessage = function(e) {\n" +
-                "    const type = e.data.type;\n" +
-                "    const payload = e.data.payload;\n" +
-                "    const requestId = e.data.requestId;\n" +
-                "    if (type === 'INIT') {\n" +
-                "        data = payload;\n" +
-                "    } else if (type === 'FILTER') {\n" +
-                "        const query = payload.toLowerCase();\n" +
-                "        if (!query) {\n" +
-                "            self.postMessage({ type: 'RESULT', payload: data, requestId: requestId });\n" +
-                "            return;\n" +
-                "        }\n" +
-                "        let result = [];\n" +
-                "        let i = 0;\n" +
-                "        const CHUNK_SIZE = 2000;\n" +
-                "        function processChunk() {\n" +
-                "            const end = Math.min(i + CHUNK_SIZE, data.length);\n" +
-                "            for (; i < end; i++) {\n" +
-                "                if (data[i].name.toLowerCase().includes(query)) {\n" +
-                "                    result.push(data[i]);\n" +
-                "                }\n" +
-                "            }\n" +
-                "            if (i < data.length) {\n" +
-                "                setTimeout(processChunk, 0);\n" +
-                "            } else {\n" +
-                "                self.postMessage({ type: 'RESULT', payload: result, requestId: requestId });\n" +
-                "            }\n" +
-                "        }\n" +
-                "        processChunk();\n" +
-                "    }\n" +
-                "};";
-            
-            const blob = new Blob([workerCode], { type: 'application/javascript' });
-            worker = new Worker(URL.createObjectURL(blob));
-            
-            worker.onmessage = function(e) {
-                const type = e.data.type;
-                const payload = e.data.payload;
-                const requestId = e.data.requestId;
-                
-                if (type === 'RESULT' && requestId === currentRequestId) {
-                    filteredData = payload;
-                    loadingSpinner.classList.add('hidden');
-                    updateScrollHeight();
-                    scrollContainer.scrollTop = 0;
-                    forceRender();
-                    
-                    if (filteredData.length === 0) {
-                        statusMessage.textContent = 'Không tìm thấy kết quả';
-                        statusMessage.classList.remove('hidden');
-                    } else {
-                        statusMessage.classList.add('hidden');
-                    }
-                }
-            };
-            
-            worker.onerror = function(e) {
-                loadingSpinner.classList.add('hidden');
-                statusMessage.textContent = 'Lỗi Worker. Vui lòng tải lại trang.';
-                statusMessage.classList.remove('hidden');
-            };
-
-            worker.postMessage({ type: 'INIT', payload: dataset });
         }
 
         function onResize() {
@@ -557,7 +596,7 @@
         function render() {
             const newStartIndex = Math.max(0, Math.floor(lastScrollY / ROW_HEIGHT) - OVERSCAN);
             
-            renderWindow.style.transform = `translate3d(0, ${newStartIndex * ROW_HEIGHT}px, 0)`;
+            renderWindow.style.transform = "translate3d(0, " + (newStartIndex * ROW_HEIGHT) + "px, 0)";
             
             for (let i = 0; i < domPool.length; i++) {
                 const dataIndex = newStartIndex + i;
@@ -590,16 +629,58 @@
 
         function onSearch(e) {
             clearTimeout(searchTimeout);
-            const query = e.target.value;
+            const query = e.target.value.toLowerCase();
             
             searchTimeout = setTimeout(() => {
-                currentRequestId++;
-                loadingSpinner.classList.remove('hidden');
-                statusMessage.classList.add('hidden');
-                if (worker) {
-                    worker.postMessage({ type: 'FILTER', payload: query, requestId: currentRequestId });
+                if (!query) {
+                    filteredData = dataset;
+                    updateViewAfterFilter();
+                    return;
                 }
+                
+                loadingSpinner.classList.remove('hidden');
+                let result = [];
+                let i = 0;
+                const CHUNK_SIZE = 2000;
+                
+                function processChunk() {
+                    const end = Math.min(i + CHUNK_SIZE, dataset.length);
+                    for (; i < end; i++) {
+                        if (dataset[i].name.toLowerCase().includes(query)) {
+                            result.push(dataset[i]);
+                        }
+                    }
+                    if (i < dataset.length) {
+                        setTimeout(processChunk, 0);
+                    } else {
+                        filteredData = result;
+                        updateViewAfterFilter();
+                    }
+                }
+                processChunk();
             }, 200);
+        }
+        
+        function updateViewAfterFilter() {
+            loadingSpinner.classList.add('hidden');
+            updateScrollHeight();
+            scrollContainer.scrollTop = 0;
+            forceRender();
+            
+            if (filteredData.length === 0) {
+                statusMessage.textContent = 'Không tìm thấy kết quả';
+                statusMessage.classList.remove('hidden');
+            } else {
+                statusMessage.classList.add('hidden');
+            }
+        }
+
+        function updateShareButton() {
+            if (selectedIds.size > 0 && selectedIds.size <= 3) {
+                shareBtn.classList.remove('hidden');
+            } else {
+                shareBtn.classList.add('hidden');
+            }
         }
 
         function onRowClick(e) {
@@ -612,13 +693,11 @@
             const item = filteredData[index];
             if (!item) return;
 
-            // Xử lý nút xem trước
             if (e.target.closest('.preview-btn')) {
                 openPreview(item);
                 return;
             }
             
-            // Xử lý chọn Card
             const card = row.querySelector('.card');
             if (selectedIds.has(item.id)) {
                 selectedIds.delete(item.id);
@@ -627,11 +706,12 @@
                 selectedIds.add(item.id);
                 card.classList.add('selected');
             }
+            
+            updateShareButton();
         }
 
         function openPreview(item) {
             previewTitle.textContent = item.name;
-            // Sử dụng Google Drive Preview URL
             pdfFrame.src = "https://drive.google.com/file/d/" + item.id + "/preview";
             previewOverlay.classList.add('active');
         }
@@ -639,11 +719,9 @@
         function closePreview() {
             previewOverlay.classList.remove('active');
             setTimeout(() => {
-                pdfFrame.src = ""; // Xóa bộ nhớ iframe khi đóng
+                pdfFrame.src = ""; 
             }, 300);
         }
-
-        document.addEventListener('DOMContentLoaded', init);
     </script>
 </body>
 </html>
